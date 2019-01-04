@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Buffers;
+using System.Collections.Generic;
 using System.Diagnostics.Contracts;
 using System.IO;
 using System.Linq;
@@ -16,10 +17,12 @@ namespace Hutch
     // ReSharper disable IdentifierTypo
     internal static class Program
     {
-        private const string LookupTable = "17Grb8fVyeD5&mUnYWtcqzdTK4LgBJA3Xx%MpR!hsiPvaSZ9NQCH=F$oj^Ekw6u_2";
+        private static string LookupTable = "17Grb8fVyeD5&mUnYWtcqzdTK4LgBJA3Xx%MpR!hsiPvaSZ9NQCH=F$oj^Ekw6u_2";
 
         private static void Main(string[] args)
         {
+            Console.WriteLine("Hutch - Stateless Password Generator v1.0");
+            
             var pwdHolder = new SecureString();
 
             Console.Write("Enter Website >");
@@ -30,17 +33,17 @@ namespace Hutch
 
 
             Console.Write("Enter Account (Case Sensitive!) >");
-            
+
             var account = Console.ReadLine();
             if (account == null)
                 throw new InvalidProgramException("Account name must not be empty.");
-            
+
             Console.Write("Enter Master Password >");
 
             do
             {
                 var key = Console.ReadKey(true);
-                // Backspace Should Not Work
+                
                 if (key.Key != ConsoleKey.Backspace && key.Key != ConsoleKey.Enter)
                 {
                     pwdHolder.AppendChar(key.KeyChar);
@@ -65,22 +68,27 @@ namespace Hutch
 
             var saltBytes = privatePool.Rent(128);
             var saltHashedBytes = privatePool.Rent(64);
-            
+
             try
             {
-                var websiteStream = Encoding.UTF8.GetBytes(websiteUri.DnsSafeHost.ToLowerInvariant());
-                var accountStream = Encoding.UTF8.GetBytes(account);
-               
+                HashSecureString(pwdHolder, ref hashBytes);
+
+                var pwdLtScramble = Scramble(ref hashBytes, LookupTable.ToCharArray()).ToCharArray();
+                
+                var wbPlain = Encoding.UTF8.GetBytes(websiteUri.DnsSafeHost.ToLowerInvariant());
+                var acPlain = Encoding.UTF8.GetBytes(account);
+
+                var websiteStream = Encoding.UTF8.GetBytes(Scramble(ref wbPlain, pwdLtScramble));
+                var accountStream  = Encoding.UTF8.GetBytes(Scramble(ref acPlain, pwdLtScramble));
+                 
                 using (var hasher = SHA512.Create())
                 {
-                    Buffer.BlockCopy(hasher.ComputeHash(websiteStream),0,saltBytes,0,64);
-                    Buffer.BlockCopy(hasher.ComputeHash(accountStream),0,saltBytes,64,64);
-                    Buffer.BlockCopy(hasher.ComputeHash(saltBytes),0,saltHashedBytes,0,64);
+                    Buffer.BlockCopy(hasher.ComputeHash(websiteStream), 0, saltBytes, 0, 64);
+                    Buffer.BlockCopy(hasher.ComputeHash(accountStream), 0, saltBytes, 64, 64);
+                    Buffer.BlockCopy(hasher.ComputeHash(saltBytes), 0, saltHashedBytes, 0, 64);
                 }
 
-                HashSecureString(pwdHolder, ref hashBytes);
-                
-                var scrambledPwd = Scramble(ref hashBytes);
+                var scrambledPwd = Scramble(ref hashBytes, pwdLtScramble);
 
                 var derivedPass = KeyDerivation.Pbkdf2(
                     password: scrambledPwd,
@@ -88,18 +96,18 @@ namespace Hutch
                     prf: KeyDerivationPrf.HMACSHA512,
                     iterationCount: 500_000,
                     numBytesRequested: 48);
-                
-                var generatedPassword = Scramble(ref derivedPass);
+
+                var generatedPassword = Scramble(ref derivedPass, pwdLtScramble);
                 Console.WriteLine();
-                
+
                 var oldFg = Console.ForegroundColor;
                 var oldBg = Console.BackgroundColor;
-                
+
                 Console.Write($"Generated Password for the site \"{websiteUri.DnsSafeHost}\" with account \"{account}\" is : ");
 
                 Console.BackgroundColor = ConsoleColor.White;
                 Console.ForegroundColor = ConsoleColor.Red;
-                
+
                 Console.WriteLine(generatedPassword);
 
                 Console.BackgroundColor = oldBg;
@@ -112,14 +120,14 @@ namespace Hutch
                 privatePool.Return(hashBytes, true);
                 privatePool.Return(saltBytes, true);
             }
-            
+
             privatePool.Return(saltHashedBytes, true);
             privatePool.Return(hashBytes, true);
             privatePool.Return(saltBytes, true);
         }
 
 
-        private static string Scramble(ref byte[] data)
+        private static string Scramble(ref byte[] data, IReadOnlyList<char> lt)
         {
             BigInteger intData = 0;
 
@@ -129,9 +137,9 @@ namespace Hutch
             var result = "";
             while (intData > 0)
             {
-                var remainder = (int) (intData % LookupTable.Length);
-                intData /= LookupTable.Length;
-                result = LookupTable[remainder] + result;
+                var remainder = (int)(intData % lt.Count);
+                intData /= lt.Count;
+                result = lt[remainder] + result;
             }
 
             // Append `1` for each leading 0 byte
