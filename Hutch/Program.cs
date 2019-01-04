@@ -37,6 +37,8 @@ namespace Hutch
             var account = Console.ReadLine();
             if (account == null)
                 throw new InvalidProgramException("Account name must not be empty.");
+            
+            account = account.Trim();
 
             Console.Write("Enter Master Password >");
 
@@ -129,26 +131,25 @@ namespace Hutch
 
         private static string Scramble(ref byte[] data, IReadOnlyList<char> lt)
         {
-            BigInteger intData = 0;
+            BigInteger num = 0;
 
-            intData = data.Aggregate(intData, (current, t) => current * 256 + t);
+            num = data.Aggregate(num, (current, t) => current * 256 + t);
 
-            // Encode BigInteger to Base58 string
             var result = "";
-            while (intData > 0)
+            
+            while (num > 0)
             {
-                var remainder = (int)(intData % lt.Count);
-                intData /= lt.Count;
+                var remainder = (int)(num % lt.Count);
+                num /= lt.Count;
                 result = lt[remainder] + result;
             }
 
-            // Append `1` for each leading 0 byte
             for (var i = 0; i < data.Length && data[i] == 0; i++)
             {
                 result = '1' + result;
             }
 
-            intData = 0;
+            num = 0;
             return result;
         }
 
